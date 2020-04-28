@@ -1,0 +1,12 @@
+[Unit]
+Description=WISEParks Logger Service
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/wiseparks-logger.py \
+                --config /etc/wiseparks/wiseparks-logger.yaml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

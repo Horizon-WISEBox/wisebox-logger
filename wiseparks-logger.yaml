@@ -1,0 +1,14 @@
+interface: wlo1mon
+channel: 1
+bucket:
+  interval: 5
+filters:
+  rssi:
+    min: 0
+log:
+  dir: /var/log/wiseparks-logger
+  rollover:
+    time: 60
+activity:
+  gpio:
+    pin: 29
