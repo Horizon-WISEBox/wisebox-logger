@@ -67,10 +67,11 @@ class Bucket():
         self.__starttime = starttime
         self.__interval = interval
         self.__endtime = starttime + interval
-        self.__elements = set()
+        self.__elements = dict()
 
-    def add(self, mac: str):
-        self.__elements.add(mac)
+    def add(self, mac: str, rssi: int):
+        if mac not in self.__elements or rssi > self.__elements[mac]:
+            self.__elements[mac] = rssi
 
     def size(self):
         return len(self.__elements)
@@ -91,10 +92,19 @@ class Bucket():
         return f'{self.__starttime}<{self.__interval}>: {len(self.__elements)}'
 
     def get_bytes(self):
-        return struct.pack(
+        count = len(self.__elements)
+        buf = bytearray(6 + count)
+        struct.pack_into(
             '<iH',
+            buf,
+            0,
             int(self.__starttime.timestamp()),
-            len(self.__elements))
+            count)
+        i = 6
+        for rssi in self.__elements.values():
+            struct.pack_into('<b', buf, i, rssi)
+            i += 1
+        return bytes(buf)
 
 
 class FileWriter():
@@ -158,16 +168,16 @@ class WiseParksLogger():
         if self.__filewriter.should_rollover(timestamp):
             self.__filewriter.close()
             self.__filewriter = self.__filewriter.find_writer_for(timestamp)
-        print(self.__bucket)
         self.__filewriter.write(self.__bucket)
 
     def log(self, timestamp: datetime, mac: str, rssi: int):
         self.activity_start()
-        if rssi >= self.__config.filters.rssi.min:
-            if self.__bucket.should_close(timestamp):
-                self.write(timestamp)
-                self.__bucket = self.__bucket.find_bucket_for(timestamp)
-            self.__bucket.add(mac)
+        if self.__bucket.should_close(timestamp):
+            self.write(timestamp)
+            self.__bucket = self.__bucket.find_bucket_for(timestamp)
+        if (self.__config.filters.rssi.min is None or
+                rssi >= self.__config.filters.rssi.min):
+            self.__bucket.add(mac, rssi)
         self.activity_end()
 
 
@@ -176,7 +186,7 @@ def build_packet_callback(logger: WiseParksLogger):
         logger.log(
             datetime.fromtimestamp(packet.time),
             packet.addr2,
-            abs(packet.dBm_AntSignal))
+            packet.dBm_AntSignal)
     return packet_callback
 
 
@@ -213,9 +223,8 @@ def main():
         help='time, in minutes, between log file rollover (default: 60)')
     parser.add_argument(
         '--filters.rssi.min',
-        type=abs,
-        default=0,
-        help='minimum (absolute) RSSI to log (default: 0)')
+        type=int,
+        help='RSSI minimum filter level (default: off)')
     parser.add_argument(
         '--activity.gpio.pin',
         type=int,
