@@ -184,7 +184,7 @@ class WiseParksLogger():
 def build_packet_callback(logger: WiseParksLogger):
     def packet_callback(packet):
         logger.log(
-            datetime.fromtimestamp(packet.time),
+            datetime.fromtimestamp(packet.time, tz=pytz.UTC),
             packet.addr2,
             packet.dBm_AntSignal)
     return packet_callback
@@ -240,7 +240,7 @@ def main():
     interface = Interface()
     interface.set_monitor_mode(2)
     interface.set_channel(cfg.channel)
-    logger = WiseParksLogger(cfg, datetime.now())
+    logger = WiseParksLogger(cfg, datetime.now(tz=pytz.UTC))
     packet_cb = build_packet_callback(logger)
     sniff(iface=cfg.interface, prn=packet_cb,
           store=0, filter='type mgt subtype probe-req')
