@@ -225,7 +225,7 @@ def main():
         '--bucket.interval',
         type=int,
         default=5,
-        help="bucket interval time in minutes (default: 5)")
+        help='bucket interval time in minutes (default: 5)')
     parser.add_argument(
         '--log.rollover.time',
         type=int,
