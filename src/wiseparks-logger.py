@@ -124,8 +124,7 @@ class FileWriter():
     def close(self):
         if not self.__file.closed:
             self.__file.close()
-        self.__path.rename(
-            Path(self.__path.parent, f'{self.__path.stem}.complete'))
+        self.__path.rename(self.__path.with_suffix('.complete'))
 
     def write(self, bucket: Bucket):
         if self.__file.closed:
@@ -194,6 +193,13 @@ def build_packet_callback(logger: WiseParksLogger):
     return packet_callback
 
 
+def find_incomplete_logs(config):
+    d = Path(config.log.dir)
+    if d.exists() and d.is_dir():
+        for f in d.glob('*.part'):
+            f.rename(f.with_suffix('.complete'))
+
+
 def main():
     app = Path(sys.argv[0]).stem
 
@@ -241,10 +247,16 @@ def main():
         version=f'{app} version {VERSION}')
 
     cfg = parser.parse_args()
+
+    startup_tasks = [find_incomplete_logs]
+    for task in startup_tasks:
+        task(cfg)
+
     interface = Interface()
     interface.set_monitor_mode(2)
     interface.set_channel(cfg.channel)
     logger = WiseParksLogger(cfg, datetime.now(tz=pytz.UTC))
+
     def handler(signum, frame):
         logger.close()
         raise SystemExit(0)
