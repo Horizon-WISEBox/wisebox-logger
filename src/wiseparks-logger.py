@@ -2,6 +2,7 @@
 
 import ctypes
 import os
+import signal
 import struct
 import sys
 
@@ -18,9 +19,7 @@ import RPi.GPIO as GPIO
 
 
 DESCRIPTION = '802.11 probe request frame logger'
-VERSION = 2.0
-
-__ENCODING = 'utf-8'
+VERSION = '2.0.0'
 
 
 class Interface():
@@ -116,7 +115,7 @@ class FileWriter():
         self.__endtime = starttime + interval
         os.makedirs(log_dir, exist_ok=True)
         start = starttime.astimezone(pytz.UTC).strftime('%Y%m%d%H%M%S')
-        self.__path = Path(log_dir, f'log.{start}.part')
+        self.__path = Path(log_dir, f'wp{start}.part')
         self.__file = self.__path.open(mode='wb', buffering=0)
 
     def should_rollover(self, timestamp: datetime):
@@ -125,7 +124,8 @@ class FileWriter():
     def close(self):
         if not self.__file.closed:
             self.__file.close()
-        self.__path.rename(str(self.__path).replace('.part', ''))
+        self.__path.rename(
+            Path(self.__path.parent, f'{self.__path.stem}.complete'))
 
     def write(self, bucket: Bucket):
         if self.__file.closed:
@@ -179,6 +179,10 @@ class WiseParksLogger():
                 rssi >= self.__config.filters.rssi.min):
             self.__bucket.add(mac, rssi)
         self.activity_end()
+
+    def close(self):
+        GPIO.cleanup()
+        self.__filewriter.close()
 
 
 def build_packet_callback(logger: WiseParksLogger):
@@ -241,10 +245,14 @@ def main():
     interface.set_monitor_mode(2)
     interface.set_channel(cfg.channel)
     logger = WiseParksLogger(cfg, datetime.now(tz=pytz.UTC))
+    def handler(signum, frame):
+        logger.close()
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, handler)
     packet_cb = build_packet_callback(logger)
     sniff(iface=cfg.interface, prn=packet_cb,
           store=0, filter='type mgt subtype probe-req')
-    GPIO.cleanup()
+    logger.close()
 
 
 if __name__ == '__main__':
