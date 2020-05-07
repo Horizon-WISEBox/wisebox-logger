@@ -1,6 +1,8 @@
 #!/usr/bin/env python3.7
 
 import ctypes
+import io
+import json
 import os
 import signal
 import struct
@@ -13,7 +15,11 @@ from jsonargparse import ArgumentParser, ActionConfigFile
 
 from scapy.all import sniff
 
+import netifaces
+
 import pytz
+
+import tzlocal
 
 import RPi.GPIO as GPIO
 
@@ -58,6 +64,37 @@ class Interface():
         struct.pack_into('B', buf, 0, mode)
         b = ctypes.create_string_buffer(bytes(buf))
         self.__so.nex_ioctl(self.__nexio, SET_MONITOR, b, 4, True)
+
+
+class Header():
+    """
+    - Monitor device MAC address 6 unsigned bytes
+    - Monitor channel 1 unsigned byte
+    - Bucket interval 1 unsigned int
+    - System time-zone 1 unsigned byte + n unsigned bytes
+    - Extra metadata
+        § RSSI filter level
+    """
+
+    def __init__(self, mac: str, config: object, timezone: str):
+        ENCODING = 'utf_8'
+        buf = io.BytesIO()
+        for x in mac.split(':'):
+            buf.write(struct.pack('<B', int(x, base=16)))
+        buf.write(struct.pack('<B', config.channel))
+        buf.write(struct.pack('<I', config.bucket.interval))
+        tz = timezone.encode(ENCODING)
+        buf.write(struct.pack('<B', len(tz)))
+        buf.write(tz)
+        metadata = json.dumps({
+            'filters.rssi.min': config.filters.rssi.min
+        }).encode(ENCODING)
+        buf.write(struct.pack('<I', len(metadata)))
+        buf.write(metadata)
+        self.__bytes = buf.getvalue()
+
+    def get_bytes(self):
+        return self.__bytes
 
 
 class Bucket():
@@ -108,15 +145,22 @@ class Bucket():
 
 class FileWriter():
 
-    def __init__(self, log_dir: str, starttime: datetime, interval: timedelta):
+    def __init__(
+            self,
+            log_dir: str,
+            starttime: datetime,
+            interval: timedelta,
+            header: Header):
         self.__log_dir = log_dir
         self.__starttime = starttime
         self.__interval = interval
+        self.__header = header
         self.__endtime = starttime + interval
         os.makedirs(log_dir, exist_ok=True)
         start = starttime.astimezone(pytz.UTC).strftime('%Y%m%d%H%M%S')
         self.__path = Path(log_dir, f'wp{start}.part')
         self.__file = self.__path.open(mode='wb', buffering=0)
+        self.__file.write(header.get_bytes())
 
     def should_rollover(self, timestamp: datetime):
         return timestamp >= self.__endtime
@@ -139,19 +183,27 @@ class FileWriter():
         while True:
             start += self.__interval
             if (start + self.__interval) > timestamp:
-                return FileWriter(self.__log_dir, start, self.__interval)
+                return FileWriter(
+                    self.__log_dir, start, self.__interval, self.__header)
 
 
 class WiseParksLogger():
 
-    def __init__(self, config, starttime: datetime):
+    def __init__(
+            self,
+            config,
+            starttime: datetime,
+            mac: str,
+            timezone: datetime.tzinfo):
         self.__config = config
         self.__bucket = Bucket(starttime, timedelta(
             minutes=config.bucket.interval))
+        header = Header(mac, config, str(timezone))
         self.__filewriter = FileWriter(
             config.log.dir,
             starttime,
-            timedelta(minutes=config.log.rollover.time))
+            timedelta(minutes=config.log.rollover.time),
+            header)
 
         if config.activity.gpio.pin < 0:
             self.activity_start = lambda: ()
@@ -255,7 +307,13 @@ def main():
     interface = Interface()
     interface.set_monitor_mode(2)
     interface.set_channel(cfg.channel)
-    logger = WiseParksLogger(cfg, datetime.now(tz=pytz.UTC))
+    try:
+        iface = netifaces.ifaddresses(cfg.interface)
+        mac = iface[netifaces.AF_LINK][0]['addr']
+    except KeyError:
+        mac = '00:00:00:00:00:00'
+    logger = WiseParksLogger(
+        cfg, datetime.now(tz=pytz.UTC), mac, tzlocal.get_localzone())
 
     def handler(signum, frame):
         logger.close()

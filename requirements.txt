@@ -3,4 +3,4 @@ netifaces==0.10.9
 pytz==2019.3
 RPi.GPIO==0.7.0
 scapy==2.4.3
-
+tzlocal==2.0.0
