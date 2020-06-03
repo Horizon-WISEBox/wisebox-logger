@@ -7,22 +7,14 @@ import os
 import signal
 import struct
 import sys
-
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from jsonargparse import ArgumentParser, ActionConfigFile
-
-from scapy.all import sniff
-
 import netifaces
-
 import pytz
-
 import tzlocal
-
-import RPi.GPIO as GPIO
-
+from jsonargparse import ActionConfigFile, ArgumentParser
+from scapy.all import sniff
 
 DESCRIPTION = '802.11 probe request frame logger'
 VERSION = '2.0.0'
@@ -197,16 +189,6 @@ class WiseParksLogger():
             timedelta(minutes=config.log.rollover.time),
             header)
 
-        if config.activity.gpio.pin < 0:
-            self.activity_start = lambda: ()
-            self.activity_end = lambda: ()
-        else:
-            pin = config.activity.gpio.pin
-            GPIO.setmode(GPIO.BOARD)
-            GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
-            self.activity_start = lambda: GPIO.output(pin, GPIO.HIGH)
-            self.activity_end = lambda: GPIO.output(pin, GPIO.LOW)
-
     def write(self, timestamp: datetime):
         if self.__filewriter.should_rollover(timestamp):
             self.__filewriter.close()
@@ -214,17 +196,14 @@ class WiseParksLogger():
         self.__filewriter.write(self.__bucket)
 
     def log(self, timestamp: datetime, mac: str, rssi: int):
-        self.activity_start()
         if self.__bucket.should_close(timestamp):
             self.write(timestamp)
             self.__bucket = self.__bucket.find_bucket_for(timestamp)
         if (self.__config.filters.rssi.min is None or
                 rssi >= self.__config.filters.rssi.min):
             self.__bucket.add(mac, rssi)
-        self.activity_end()
 
     def close(self):
-        GPIO.cleanup()
         self.__filewriter.close()
 
 
@@ -279,11 +258,6 @@ def main():
         '--filters.rssi.min',
         type=int,
         help='RSSI minimum filter level (default: off)')
-    parser.add_argument(
-        '--activity.gpio.pin',
-        type=int,
-        default=-1,
-        help='GPIO pin to signal activity on (default: unset)')
     parser.add_argument('--config', action=ActionConfigFile)
     parser.add_argument(
         '--version',
