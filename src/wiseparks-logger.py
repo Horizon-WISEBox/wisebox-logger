@@ -67,14 +67,6 @@ class Interface():
 
 
 class Header():
-    """
-    - Monitor device MAC address 6 unsigned bytes
-    - Monitor channel 1 unsigned byte
-    - Bucket interval 1 unsigned int
-    - System time-zone 1 unsigned byte + n unsigned bytes
-    - Extra metadata
-        § RSSI filter level
-    """
 
     def __init__(self, mac: str, config: object, timezone: str):
         ENCODING = 'utf_8'
