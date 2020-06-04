@@ -20,44 +20,6 @@ DESCRIPTION = '802.11 probe request frame logger'
 VERSION = '2.0.0'
 
 
-class Interface():
-
-    def __init__(self):
-        self.__so = ctypes.CDLL('libnexio.so')
-        self.__nexio = self.__so.nex_init_netlink()
-
-    def get_chanspec(self):
-        GET_CHANSPEC = 262
-        b = ctypes.create_string_buffer(b'chanspec')
-        self.__so.nex_ioctl(self.__nexio, GET_CHANSPEC, b, 9, False)
-        return struct.unpack_from('H', b.raw)[0]
-
-    def get_channel(self):
-        return self.get_chanspec() & 0xFF
-
-    def set_channel(self, channel: int):
-        SET_CHANSPEC = 263
-        current = self.get_chanspec()
-        chanspec = (current >> 8 << 8) | channel
-        buf = bytearray(b'chanspec\x00\x00\x00\x00\x00')
-        struct.pack_into('I', buf, 9, chanspec)
-        b = ctypes.create_string_buffer(bytes(buf))
-        self.__so.nex_ioctl(self.__nexio, SET_CHANSPEC, b, 13, True)
-
-    def get_monitor_mode(self):
-        GET_MONITOR = 107
-        b = ctypes.create_string_buffer(4)
-        self.__so.nex_ioctl(self.__nexio, GET_MONITOR, b, 4, False)
-        return struct.unpack_from('B', b.raw)[0]
-
-    def set_monitor_mode(self, mode: int):
-        SET_MONITOR = 108
-        buf = bytearray(b'\x00\x00\x00\x00')
-        struct.pack_into('B', buf, 0, mode)
-        b = ctypes.create_string_buffer(bytes(buf))
-        self.__so.nex_ioctl(self.__nexio, SET_MONITOR, b, 4, True)
-
-
 class Header():
 
     def __init__(self, mac: str, config: object, timezone: str):
@@ -270,9 +232,6 @@ def main():
     for task in startup_tasks:
         task(cfg)
 
-    interface = Interface()
-    interface.set_monitor_mode(2)
-    interface.set_channel(cfg.channel)
     try:
         iface = netifaces.ifaddresses(cfg.interface)
         mac = iface[netifaces.AF_LINK][0]['addr']
