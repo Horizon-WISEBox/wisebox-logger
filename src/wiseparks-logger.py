@@ -17,7 +17,9 @@ from jsonargparse import ActionConfigFile, ArgumentParser
 from scapy.all import sniff
 
 DESCRIPTION = '802.11 probe request frame logger'
-VERSION = '2.0.0'
+VERSION = '1.0.0'
+API_VERSION = 1
+LOGFILE_VERSION = 1
 
 
 class Header():
@@ -25,9 +27,9 @@ class Header():
     def __init__(self, mac: str, config: object, timezone: str):
         ENCODING = 'utf_8'
         buf = io.BytesIO()
+        buf.write(struct.pack('<H', LOGFILE_VERSION))
         for x in mac.split(':'):
             buf.write(struct.pack('<B', int(x, base=16)))
-        buf.write(struct.pack('<B', config.channel))
         buf.write(struct.pack('<I', config.bucket.interval))
         tz = timezone.encode(ENCODING)
         buf.write(struct.pack('<B', len(tz)))
@@ -50,10 +52,12 @@ class Bucket():
         self.__interval = interval
         self.__endtime = starttime + interval
         self.__elements = dict()
+        self.__frequency = 0
 
-    def add(self, mac: str, rssi: int):
+    def add(self, mac: str, rssi: int, frequency: int):
         if mac not in self.__elements or rssi > self.__elements[mac]:
             self.__elements[mac] = rssi
+            self.__frequency = frequency
 
     def size(self):
         return len(self.__elements)
@@ -75,14 +79,15 @@ class Bucket():
 
     def get_bytes(self):
         count = len(self.__elements)
-        buf = bytearray(6 + count)
+        buf = bytearray(8 + count)
         struct.pack_into(
-            '<iH',
+            '<iHH',
             buf,
             0,
             int(self.__starttime.timestamp()),
+            self.__frequency,
             count)
-        i = 6
+        i = 8
         for rssi in self.__elements.values():
             struct.pack_into('<b', buf, i, rssi)
             i += 1
@@ -157,13 +162,13 @@ class WiseParksLogger():
             self.__filewriter = self.__filewriter.find_writer_for(timestamp)
         self.__filewriter.write(self.__bucket)
 
-    def log(self, timestamp: datetime, mac: str, rssi: int):
+    def log(self, timestamp: datetime, mac: str, rssi: int, frequency: int):
         if self.__bucket.should_close(timestamp):
             self.write(timestamp)
             self.__bucket = self.__bucket.find_bucket_for(timestamp)
         if (self.__config.filters.rssi.min is None or
                 rssi >= self.__config.filters.rssi.min):
-            self.__bucket.add(mac, rssi)
+            self.__bucket.add(mac, rssi, frequency)
 
     def close(self):
         self.__filewriter.close()
@@ -171,10 +176,17 @@ class WiseParksLogger():
 
 def build_packet_callback(logger: WiseParksLogger):
     def packet_callback(packet):
+        try:
+            freq = packet.ChannelFrequency
+        except:
+            freq = None
+        if not freq or freq < 0:
+            freq = 0
         logger.log(
             datetime.fromtimestamp(packet.time, tz=pytz.UTC),
             packet.addr2,
-            packet.dBm_AntSignal)
+            packet.dBm_AntSignal,
+            freq)
     return packet_callback
 
 
