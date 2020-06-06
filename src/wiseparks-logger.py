@@ -9,6 +9,8 @@ import struct
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Union
 
 import netifaces
 import pytz
@@ -17,9 +19,70 @@ from jsonargparse import ActionConfigFile, ArgumentParser
 from scapy.all import sniff
 
 DESCRIPTION = '802.11 probe request frame logger'
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 API_VERSION = 1
 LOGFILE_VERSION = 1
+
+
+class ExtArgumentParser(ArgumentParser):
+
+    def check_config(
+            self,
+            cfg: Union[SimpleNamespace, dict],
+            skip_none: bool = True,
+            branch=None):
+        import jsonargparse as ap
+        cfg = ccfg = ap.deepcopy(cfg)
+        if not isinstance(cfg, dict):
+            cfg = ap.namespace_to_dict(cfg)
+        if isinstance(branch, str):
+            cfg = ap._flat_namespace_to_dict(
+                ap._dict_to_flat_namespace({branch: cfg}))
+
+        def get_key_value(dct, key):
+            keys = key.split('.')
+            for key in keys:
+                dct = dct[key]
+            return dct
+
+        def check_required(cfg):
+            for reqkey in self.required_args:
+                try:
+                    val = get_key_value(cfg, reqkey)
+                    if val is None:
+                        raise TypeError(f'Required key "{reqkey}" is None.')
+                except:
+                    raise TypeError(
+                        f'Required key "{reqkey}" not included in config.')
+
+        def check_values(cfg, base=None):
+            subcommand = None
+            for key, val in cfg.items():
+                if key in ap.meta_keys:
+                    continue
+                kbase = key if base is None else base+'.'+key
+                action = ap._find_action(self, kbase)
+                if action is not None:
+                    if val is None and skip_none:
+                        continue
+                    self._check_value_key(action, val, kbase, ccfg)
+                    if (isinstance(action, ap.ActionSubCommands)
+                            and kbase != action.dest):
+                        if subcommand is not None:
+                            raise KeyError(
+                                f'Only values from a single sub-command '
+                                f'are allowed ("{subcommand}", "{kbase}).')
+                        subcommand = kbase
+                elif isinstance(val, dict):
+                    check_values(val, kbase)
+                else:
+                    pass
+
+        try:
+            check_required(cfg)
+            check_values(cfg)
+        except Exception as ex:
+            self.error(f'Config checking failed :: {ex}')
 
 
 class Header():
@@ -200,7 +263,7 @@ def find_incomplete_logs(config):
 def main():
     app = Path(sys.argv[0]).stem
 
-    parser = ArgumentParser(
+    parser = ExtArgumentParser(
         prog=app,
         default_config_files=[],
         description=DESCRIPTION,
