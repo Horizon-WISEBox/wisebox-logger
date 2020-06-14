@@ -7,21 +7,29 @@ import os
 import signal
 import struct
 import sys
+import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Union
+from typing import Callable, List, Union
 
 import netifaces
 import pytz
+import requests
 import tzlocal
 from jsonargparse import ActionConfigFile, ArgumentParser
 from scapy.all import sniff
 
 DESCRIPTION = '802.11 probe request frame logger'
-VERSION = '1.0.1'
+VERSION = '1.1.0'
 API_VERSION = 1
 LOGFILE_VERSION = 1
+
+
+class Empty(object):
+    def __getattr__(self, name):
+        return lambda *args: None
 
 
 class ExtArgumentParser(ArgumentParser):
@@ -83,6 +91,57 @@ class ExtArgumentParser(ArgumentParser):
             check_values(cfg)
         except Exception as ex:
             self.error(f'Config checking failed :: {ex}')
+
+
+class Uploader(threading.Thread):
+
+    def __init__(self, config: object):
+        super().__init__(daemon=False)
+        self.do_stop = False
+        self.condition = threading.Condition()
+        self.config = config
+
+    def _do_upload(self) -> bool:
+        success = True
+        sep = '' if self.config.upload.url.endswith('/') else '/'
+        url = f'{self.config.upload.url}{sep}api/v{API_VERSION}/upload'
+        params = {'api_key': self.config.upload.api_key}
+        headers = {'Content-Type': 'application/octet-stream'}
+        log_dir = Path(self.config.log.dir)
+        for f in log_dir.glob('wp*.complete'):
+            try:
+                r = requests.post(
+                    url,
+                    data=f.read_bytes(),
+                    params=params,
+                    headers=headers)
+                if r.status_code != 200:
+                    raise Exception()
+                if self.config.upload.keep_logs:
+                    f.rename(Path(f.parent, f'{f.stem}.uploaded'))
+                else:
+                    f.unlink()
+            except:
+                success = False
+        return success
+
+    def run(self):
+        while not self.do_stop:
+            with self.condition:
+                if self._do_upload():
+                    self.condition.wait()
+                else:
+                    self.condition.wait(
+                        timeout=(self.config.upload.retry_interval * 60))
+
+    def stop(self):
+        with self.condition:
+            self.do_stop = True
+            self.condition.notify()
+
+    def wakeup(self):
+        with self.condition:
+            self.condition.notify()
 
 
 class Header():
@@ -208,7 +267,8 @@ class WiseParksLogger():
             config,
             starttime: datetime,
             mac: str,
-            timezone: datetime.tzinfo):
+            timezone: datetime.tzinfo,
+            rollover_actions: List[Callable[[], None]] = []):
         self.__config = config
         self.__bucket = Bucket(starttime, timedelta(
             minutes=config.bucket.interval))
@@ -218,11 +278,14 @@ class WiseParksLogger():
             starttime,
             timedelta(minutes=config.log.rollover.time),
             header)
+        self.rollover_actions = rollover_actions
 
     def write(self, timestamp: datetime):
         if self.__filewriter.should_rollover(timestamp):
             self.__filewriter.close()
             self.__filewriter = self.__filewriter.find_writer_for(timestamp)
+            for action in self.rollover_actions:
+                action()
         self.__filewriter.write(self.__bucket)
 
     def log(self, timestamp: datetime, mac: str, rssi: int, frequency: int):
@@ -285,16 +348,39 @@ def main():
         '--bucket.interval',
         type=int,
         default=5,
-        help='bucket interval time in minutes (default: 5)')
+        help='bucket interval time in minutes')
     parser.add_argument(
         '--log.rollover.time',
         type=int,
         default=60,
-        help='time, in minutes, between log file rollover (default: 60)')
+        help='time, in minutes, between log file rollover')
     parser.add_argument(
         '--filters.rssi.min',
         type=int,
-        help='RSSI minimum filter level (default: off)')
+        help='RSSI minimum filter level')
+    parser.add_argument(
+        '--upload.enabled',
+        type=bool,
+        default=False,
+        help='enable upload of logs')
+    parser.add_argument(
+        '--upload.url',
+        type=str,
+        help='server url to upload logs to')
+    parser.add_argument(
+        '--upload.api_key',
+        type=str,
+        help='api key to use to authenticate with server')
+    parser.add_argument(
+        '--upload.retry_interval',
+        type=int,
+        default=10,
+        help='time, in minutes, to retry failed uploads')
+    parser.add_argument(
+        '--upload.keep_logs',
+        type=bool,
+        default=True,
+        help='whether to keep uploaded logs or to delete after upload')
     parser.add_argument('--config', action=ActionConfigFile)
     parser.add_argument(
         '--version',
@@ -312,16 +398,30 @@ def main():
         mac = iface[netifaces.AF_LINK][0]['addr']
     except KeyError:
         mac = '00:00:00:00:00:00'
+
+    if cfg.upload.enabled:
+        uploader = Uploader(cfg)
+        uploader.start()
+        actions = [uploader.wakeup]
+    else:
+        uploader = Empty()
+        actions = []
+
     logger = WiseParksLogger(
-        cfg, datetime.now(tz=pytz.UTC), mac, tzlocal.get_localzone())
+        cfg, datetime.now(tz=pytz.UTC), mac, tzlocal.get_localzone(), actions)
 
     def handler(signum, frame):
+        uploader.stop()
         logger.close()
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, handler)
     packet_cb = build_packet_callback(logger)
-    sniff(iface=cfg.interface, prn=packet_cb,
-          store=0, filter='type mgt subtype probe-req')
+    sniff(
+        iface=cfg.interface,
+        prn=packet_cb,
+        store=0,
+        filter='type mgt subtype probe-req')
+    uploader.stop()
     logger.close()
 
 
