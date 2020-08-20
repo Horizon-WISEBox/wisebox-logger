@@ -4,8 +4,10 @@ import ctypes
 import io
 import json
 import os
+import shlex
 import signal
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -22,7 +24,7 @@ from jsonargparse import ActionConfigFile, ArgumentParser
 from scapy.all import sniff
 
 DESCRIPTION = '802.11 probe request frame logger'
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 API_VERSION = 1
 LOGFILE_VERSION = 1
 
@@ -91,6 +93,31 @@ class ExtArgumentParser(ArgumentParser):
             check_values(cfg)
         except Exception as ex:
             self.error(f'Config checking failed :: {ex}')
+
+
+class InactivityMonitor(threading.Thread):
+
+    def __init__(self, config: object):
+        super().__init__(daemon=True)
+        self.condition = threading.Condition()
+        self.config = config
+        self.last_activity = datetime.now(tz=pytz.UTC)
+        self.interval = timedelta(minutes=config.inactivity.interval)
+
+    def _do_command(self):
+        args = shlex.split(self.config.inactivity.action)
+        subprocess.run(args)
+
+    def run(self):
+        while True:
+            with self.condition:
+                delta = datetime.now(tz=pytz.UTC) - self.last_activity
+                if delta > self.interval:
+                    self._do_command()
+                self.condition.wait(60)
+
+    def register_activity(self):
+        self.last_activity = datetime.now(tz=pytz.UTC)
 
 
 class Uploader(threading.Thread):
@@ -268,7 +295,8 @@ class WiseParksLogger():
             starttime: datetime,
             mac: str,
             timezone: datetime.tzinfo,
-            rollover_actions: List[Callable[[], None]] = []):
+            rollover_actions: List[Callable[[], None]] = [],
+            log_actions: List[Callable[[], None]] = []):
         self.__config = config
         self.__bucket = Bucket(starttime, timedelta(
             minutes=config.bucket.interval))
@@ -279,6 +307,7 @@ class WiseParksLogger():
             timedelta(minutes=config.log.rollover.time),
             header)
         self.rollover_actions = rollover_actions
+        self.log_actions = log_actions
 
     def write(self, timestamp: datetime):
         if self.__filewriter.should_rollover(timestamp):
@@ -295,6 +324,8 @@ class WiseParksLogger():
         if (self.__config.filters.rssi.min is None or
                 rssi >= self.__config.filters.rssi.min):
             self.__bucket.add(mac, rssi, frequency)
+        for action in self.log_actions:
+            action()
 
     def close(self):
         self.__filewriter.close()
@@ -381,6 +412,21 @@ def main():
         type=bool,
         default=True,
         help='whether to keep uploaded logs or to delete after upload')
+    parser.add_argument(
+        '--inactivity.enabled',
+        type=bool,
+        default=False,
+        help='whether to monitor for inactivity and take an action')
+    parser.add_argument(
+        '--inactivity.interval',
+        type=int,
+        default=60,
+        help='inactivity time interval in minutes, after which action is taken')
+    parser.add_argument(
+        '--inactivity.action',
+        type=str,
+        default='/bin/true',
+        help='action (command) to be taken after inactivity interval elapsed')
     parser.add_argument('--config', action=ActionConfigFile)
     parser.add_argument(
         '--version',
@@ -402,13 +448,25 @@ def main():
     if cfg.upload.enabled:
         uploader = Uploader(cfg)
         uploader.start()
-        actions = [uploader.wakeup]
+        rollover_actions = [uploader.wakeup]
     else:
         uploader = Empty()
-        actions = []
+        rollover_actions = []
+
+    if cfg.inactivity.enabled:
+        inactivity_monitor = InactivityMonitor(cfg)
+        inactivity_monitor.start()
+        log_actions = [inactivity_monitor.register_activity]
+    else:
+        log_actions = []
 
     logger = WiseParksLogger(
-        cfg, datetime.now(tz=pytz.UTC), mac, tzlocal.get_localzone(), actions)
+        cfg, datetime.now(
+            tz=pytz.UTC),
+            mac,
+            tzlocal.get_localzone(),
+            rollover_actions=rollover_actions,
+            log_actions=log_actions)
 
     def handler(signum, frame):
         uploader.stop()
