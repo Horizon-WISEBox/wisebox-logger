@@ -287,7 +287,7 @@ class FileWriter():
                     self.__log_dir, start, self.__interval, self.__header)
 
 
-class WiseParksLogger():
+class WISEBoxLogger():
 
     def __init__(
             self,
@@ -331,7 +331,7 @@ class WiseParksLogger():
         self.__filewriter.close()
 
 
-def build_packet_callback(logger: WiseParksLogger):
+def build_packet_callback(logger: WISEBoxLogger):
     def packet_callback(packet):
         try:
             freq = packet.ChannelFrequency
@@ -460,7 +460,7 @@ def main():
     else:
         log_actions = []
 
-    logger = WiseParksLogger(
+    logger = WISEBoxLogger(
         cfg, datetime.now(
             tz=pytz.UTC),
             mac,
