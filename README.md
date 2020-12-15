@@ -93,7 +93,7 @@ optional arguments:
 
 * v1.3.0
   * Change from WISEParks to WISEBox
-  * See [commit change](2529daf29989fb3d160bf11c432b609b656e50ee)
+  * See [commit change](#2529daf29989fb3d160bf11c432b609b656e50ee)
 * v1.2.0
   * Implented watchdog functionality to execute an action after a period
     of inactivity
