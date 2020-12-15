@@ -93,21 +93,21 @@ optional arguments:
 
 * v1.3.0
   * Change from WISEParks to WISEBox
-  * See [commit change](commit/2529daf)
+  * See [commit change](https://github.com/Horizon-WISEBox/wisebox-logger/commit/2529daf)
 * v1.2.0
   * Implented watchdog functionality to execute an action after a period
     of inactivity
-  * See [commit change](d387093)
+  * See [commit change](https://github.com/Horizon-WISEBox/wisebox-logger/commit/d387093)
 * v1.1.0
   * Added logfile upload to server functionality
-  * See [commit change](a01dcbf)
+  * See [commit change](https://github.com/Horizon-WISEBox/wisebox-logger/commit/a01dcbf)
 * v1.0.1
   * Unkown values allowed in configuration files
-  * See [commit change](aee3175)
+  * See [commit change](https://github.com/Horizon-WISEBox/wisebox-logger/commit/aee3175)
 * v1.0.0
   * Initial Release
   * Added logfile versioning
-  * See [commit change](843c958)
+  * See [commit change](https://github.com/Horizon-WISEBox/wisebox-logger/commit/843c958)
 
 ## License
 
