@@ -111,5 +111,5 @@ optional arguments:
 
 ## License
 
-This project is licensed under the GNU AFFERO General Public License, Version 3
+This project is licensed under the GNU Affero General Public License, Version 3
 \- see the [LICENSE](LICENSE) file for details
